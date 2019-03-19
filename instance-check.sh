@@ -1,15 +1,16 @@
 #!/bin/bash                                                                                                                                                   
 # Created by Syed Raza
 # Objective:
-## To find all the running instances in all regions running over 10 Hours or value threshold Hours.
+## To find all the running instances in all regions running over x Hours or value threshold Hours defined in the CSV file.
 #
 #set -xv
 while true
 do
 var=0
-threshold=10
+threshold=99999
 whitelistfile=/tmp/ec2-whitelist.txt
-printf "REGION,INSTANCE-ID,DURATION\n" > /tmp/instances.csv
+# Whitelist file format name,hours
+printf "NAME,REGION,INSTANCE-ID,DURATION\n" > /tmp/instances.csv
 
 for i in $(aws ec2 describe-regions | jq -r .'Regions' | jq -r .[] | jq -r .'RegionName')
 do
@@ -18,7 +19,7 @@ do
 	for inst in $(aws ec2 describe-instances --region "$i" --query 'Reservations[*].Instances[*].[InstanceId]' --filters Name=instance-state-name,Values=running --output json | jq -r .[] | jq -r .[] | jq -r .[])
 		do 
 			echo " This is the Running Instance "$inst""
-			for dt0 in $(aws ec2 describe-instances --instance-id "$inst" | jq -r .'Reservations' | jq -r .[] | jq -r .'Instances' | jq -r .[] | jq -r .'LaunchTime')
+			for dt0 in $(aws ec2 describe-instances --region "$i" --instance-id "$inst" | jq -r .'Reservations' | jq -r .[] | jq -r .'Instances' | jq -r .[] | jq -r .'LaunchTime')
 			do
 				dt1=`date -d $dt0 +%Y-%m-%d\ %H:%M:%S`
 
@@ -37,14 +38,14 @@ do
 
 				echo "Approx hour diff b/w $dt1 & $dt2 = $hDiff for Instance "$inst""
 				echo "$hDiff"
-				a=`grep -R "$inst" $whitelistfile | wc -l`
-			if [ "$a" == "0" ]; then
-				if [ "$hDiff" -ge "$threshold" ]; then
+				tag=$(aws ec2 describe-instances --region $i --instance-ids "$inst" --query 'Reservations[].Instances[].Tags[?Key==`Name`].Value' --output text)
+				a=$(grep -R "$tag" "$whitelistfile" | cut -d, -f 1 |  wc -l)
+				limit=$(grep -R "$tag" "$whitelistfile" | cut -d, -f 2)
+			if [ "$a" == "0" ] || [ "$hDiff" -ge "$limit" ] || [ "$hDiff" -ge "$threshold" ]; then
 					var=1
-					echo "We got a non white listed Instance running $inst in $i for $hdiff"
-					printf ""$i","$inst","$hDiff"\n" >> /tmp/instances.csv
+					echo "We got a non white listed Instance running Name $tag ID $inst in Region $i for $hdiff"
+					printf ""$tag","$i","$inst","$hDiff"\n" >> /tmp/instances.csv
 				fi
-			fi
 
 			done
 	done
@@ -52,7 +53,7 @@ done
 if [ "$var" == "1" ]; 
 then 
 	echo "Need to send the email now ";
-       	mutt -s "ALERT -- 10+ Hours Running Instance Found -- Please look into attached CSV FILE" -a /tmp/instances.csv -- xyz@abc.com,abc@xyz.com < .
+       	mutt -s "ALERT -- Unknown Instance Found -- Please look into attached CSV FILE" -a /tmp/instances.csv -- xyz@abc.com,abc@domain.com < .
 fi
 sleep 1800
 done
